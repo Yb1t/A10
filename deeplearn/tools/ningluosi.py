@@ -13,12 +13,15 @@ train_image = DATASET_PATH + 'images/train/resized{}.jpg'.format(IMAGE_INDEX)
 label = DATASET_PATH + 'labels/train/resized{}.txt'.format(IMAGE_INDEX)
 
 img = cv2.imread(train_image)
+print("img shape:{}".format(img.shape))
+img_width = img.shape[1]
+img_height = img.shape[0]
 # blur = cv2.blur(img,(5,5))
 # blur0=cv2.medianBlur(blur,5)
 # blur1= cv2.GaussianBlur(blur0,(5,5),0)
 # blur2= cv2.bilateralFilter(blur1,9,75,75)
-img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-hsv_img = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
+rgb_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+hsv_img = cv2.cvtColor(rgb_img, cv2.COLOR_RGB2HSV)
 
 # 主板绿
 lower1 = (30, 50, 40)
@@ -36,7 +39,6 @@ mask = cv2.bitwise_and(mask1, cv2.bitwise_not(mask2))
 # mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)  # 开运算
 # mask = cv2.erode(mask, kernel)  # 腐蚀
 # mask = cv2.dilate(mask, kernel, iterations=1)  # 膨胀
-
 
 plt.subplot(221)
 plt.imshow(img)
@@ -59,74 +61,76 @@ cv2.imshow('mask', mask)
 
 ########################################################
 
-pic = cv2.imread(train_image)
-data = np.loadtxt(label, dtype=float)
+# img = cv2.imread(train_image)
+data = np.loadtxt(label, dtype=float)  # [label][x%][y%][w%][h%]
 percent_x = 0
 percent_y = 0
 exist = False
+boxes = []
+print("calculating box size with item(s):")
 for item in data:
+    # 主板标注大小（百分比）
     if item[0] == 6.0 or item[0] == 0 or item[0] == 1.0:
         exist = True
         print(item)
         percent_x = (item[3] + percent_x) / 2
         percent_y = (item[4] + percent_y) / 2
-step = int((percent_x + percent_y) / 2 * (pic.shape[0] + pic.shape[1]) / 2)
+step = int((percent_x + percent_y) / 2 * (img.shape[1] + img.shape[0]) / 2)
 print("step:", step)
-nx = int(pic.shape[0] / step) if exist else 0
-ny = int(pic.shape[1] / step) if exist else 0
+nx = int(img.shape[1] / step) if exist else 0
+ny = int(img.shape[0] / step) if exist else 0
+print("nx:{} ny:{}".format(nx, ny), round(nx*data[0, 1]))
 
-map01 = np.zeros((nx, ny), np.uint8)
-
+# 建立以(1/nx,1/ny)为原点的分割线坐标系map01
+line_x = nx-1
+line_y = ny-1
+map01 = np.zeros((line_x, line_y), np.uint8)  # n-1条线
 near = 5
-for y in range(ny):
-    for x in range(nx):
-        # if step * x > img.shape[0] or step * y > img.shape[1]:
+for y in range(line_y):
+    for x in range(line_x):
+        # if step * x > img.shape[1] or step * y > img.shape[0]:
         #     break
-        point_x = int(step * x)
-        point_y = int(step * y)
-        map01[x, y] = 3 <= np.sum([mask[point_x, point_y] > 0,
-                                   mask[point_x + near, point_y + near] > 0,
-                                   mask[point_x - near, point_y - near] > 0,
-                                   mask[point_x - near, point_y + near] > 0,
-                                   mask[point_x + near, point_y - near] > 0]
+        point_x = int(step * (x+1))
+        point_y = int(step * (y+1))
+        map01[x, y] = 3 <= np.sum([mask[point_y, point_x] > 0,
+                                   mask[point_y + near, point_x + near] > 0,
+                                   mask[point_y - near, point_x - near] > 0,
+                                   mask[point_y + near, point_x - near] > 0,
+                                   mask[point_y - near, point_x + near] > 0]
                                   )
 
-shai = np.zeros((nx, ny), np.uint8)
+shai = np.zeros((line_x, line_y), np.uint8)
 isOne = False
-for y in range(ny):
-    for x in range(nx):
+for y in range(line_y):
+    for x in range(line_x):
         if isOne:
             shai[x, y] = 1
         isOne = not isOne
-    if nx % 2 == 0:
+    if line_x % 2 == 0:
         isOne = not isOne
 
 result = map01 * shai
 
 points = []
-padding = 3
-for y in range(padding, ny - padding + 1):
-    for x in range(padding, nx - padding + 1):
-        pointx = round(x * mask.shape[0] / nx)
-        pointy = round(y * mask.shape[1] / ny)
-        cv2.line(pic, (0, pointx), (pic.shape[1], pointx), [0, 0, 255], 2)
-        cv2.line(pic, (pointy, 0), (pointy, pic.shape[0]), [0, 0, 255], 2)
+padding = 0
+for y in range(padding, line_y - padding):
+    for x in range(padding, line_x - padding):
+        pointx = (x+1) * step  # 以(1/nx,1/ny)为原点
+        pointy = (y+1) * step
+        cv2.line(img, (pointx, 0), (pointx, img.shape[0]), [0, 0, 255], 2)
+        cv2.line(img, (0, pointy), (img.shape[1], pointy), [0, 0, 255], 2)
         if result[x, y] == 1:
-            points.append([pointx, pointy])
+            points.append([pointy, pointx])
 
 print("points:", len(points))
 
 screw_size_x = int(step / 2)
 screw_size_y = int(step / 2)
-alphaReserve = 0.8
-BChannel = 255
-GChannel = 0
-RChannel = 0
 for start in points:
-    pic[(start[0] - screw_size_x):(start[0] + screw_size_y), (start[1] - screw_size_x):(start[1] + screw_size_y)] \
+    img[(start[0] - screw_size_x):(start[0] + screw_size_y), (start[1] - screw_size_x):(start[1] + screw_size_y)] \
         = [255, 0, 0]
 cv2.namedWindow("1", cv2.WINDOW_NORMAL)
 cv2.resizeWindow("1", 640, 480)
-cv2.imshow("1", pic)
+cv2.imshow("1", img)
 cv2.waitKey()
 cv2.destroyAllWindows()

@@ -6,13 +6,15 @@ import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 
-IMAGE_INDEX = 71
+IMAGE_INDEX = 88
 
 DATASET_PATH = '/home/hao/Code/python/A10/datasets/board96/'
-train_image = DATASET_PATH + 'images/train/resized{}.jpg'.format(IMAGE_INDEX)
+train = DATASET_PATH + 'images/train/resized{}.jpg'.format(IMAGE_INDEX)
 label = DATASET_PATH + 'labels/train/resized{}.txt'.format(IMAGE_INDEX)
+screw = '/home/hao/Code/python/A10/deeplearn/tools/img.png'
+screw_img = cv2.imread(screw, cv2.IMREAD_UNCHANGED)  # 带透明度读取
 
-img = cv2.imread(train_image)
+img = cv2.imread(train)
 print("img shape:{}".format(img.shape))
 img_width = img.shape[1]
 img_height = img.shape[0]
@@ -85,7 +87,7 @@ if exist:
 else:
     print("There is NO target label index, check your label file:", label)
     print("exiting...")
-    exit()
+    exit(1)
 print("nx:{} ny:{} line_x:{} line_y:{}".format(nx, ny, line_x, line_y))
 
 boxes = np.ones((line_y, line_x), dtype=np.uint8)
@@ -156,6 +158,7 @@ for y in range(padding, line_y - padding):
         cv2.putText(blk, str(y), (0, pointy), cv2.FONT_HERSHEY_DUPLEX, 1, (0, 255, 0), 3)
         if result[y, x] == 1:
             points.append([pointy, pointx])
+            print("add available point: x={}, y={}".format(pointx, pointy))
         elif boxes[y, x] == 0:
             baned_points.append([pointy, pointx])
 
@@ -168,19 +171,56 @@ for start in points:
     blk[(start[0] - screw_size_y):(start[0] + screw_size_y), (start[1] - screw_size_x):(start[1] + screw_size_x)] \
         = [0, 255, 0]
     count += 1
-    cv2.putText(img, str(count), (start[1], start[0]), cv2.FONT_HERSHEY_DUPLEX, 1, (255, 255, 255), 3)
+    cv2.putText(blk, str(count), (start[1], start[0]), cv2.FONT_HERSHEY_DUPLEX, .7, (255, 255, 255), 3)
 for start in baned_points:
     blk[(start[0] - screw_size_y):(start[0] + screw_size_y), (start[1] - screw_size_x):(start[1] + screw_size_x)] \
         = [255, 0, 0]
-img = cv2.addWeighted(img, 1.0, blk, 0.6, 1)
-cv2.namedWindow("preview", cv2.WINDOW_NORMAL)
-cv2.resizeWindow("preview", 640, 480)
-cv2.imshow("preview", img)
+preview_img = cv2.addWeighted(img, 1.0, blk, 0.5, 1)
+
+cv2.namedWindow('preview', cv2.WINDOW_NORMAL)
+cv2.resizeWindow('preview', 640, 480)
+cv2.imshow('preview', preview_img)
 
 plt.subplot(339), plt.title("preview")
-plt.imshow(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+plt.imshow(cv2.cvtColor(preview_img, cv2.COLOR_BGR2RGB))
 
-plt.show()
+result_img = img
+labels = []
+label_num = 6
+for point in points:
+    x_from = point[1] - step // 2
+    y_from = point[0] - step // 2
+    x_to = x_from + step
+    y_to = y_from + step
+    screw_img = cv2.resize(screw_img, (step, step))
+    alpha = screw_img[:, :, 3] / 255
+    for c in range(3):
+        result_img[y_from:y_to, x_from:x_to, c] = (((1 - alpha) * result_img[y_from:y_to, x_from:x_to, c])
+                                                   + (alpha * screw_img[:, :, c]))
+    # [label][x%][y%][w%][h%]
+    labels.append([label_num, point[1] / img_width, point[0] / img_height, img_width / step,
+                   img_height / step])
+
+for idx in range(len(labels)):
+    for col in range(1, 3):
+        labels[idx][col] = format(labels[idx][col], '.6f')
+    for col in range(3, 5):
+        labels[idx][col] = format(labels[idx][col] / 100, '.6f')
+
+print("labels:{}...".format(labels[:2]))
+cv2.namedWindow('result', cv2.WINDOW_NORMAL)
+cv2.resizeWindow('result', 640, 480)
+cv2.imshow('result', result_img)
+
+label_file_name = "{}.txt".format(IMAGE_INDEX)
+print("saving labels: {}".format(label_file_name))
+np.savetxt(label_file_name, X=labels, fmt='%s')
+
+output_img_name = "{}.png".format(IMAGE_INDEX)
+print("saving output image: {}".format(output_img_name))
+cv2.imwrite(output_img_name, result_img)
+
+# plt.show()
 
 cv2.waitKey()
 cv2.destroyAllWindows()

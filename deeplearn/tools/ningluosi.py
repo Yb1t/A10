@@ -8,12 +8,13 @@ import matplotlib.pyplot as plt
 
 IMAGE_INDEX = 88
 
-DATASET_PATH = '/home/hao/Code/python/A10/datasets/board96/'
-train = DATASET_PATH + 'images/train/resized{}.jpg'.format(IMAGE_INDEX)
-label = DATASET_PATH + 'labels/train/resized{}.txt'.format(IMAGE_INDEX)
+DATASET_PATH = '/home/hao/Code/python/A10/datasets/board96/'  # 源数据集目录
+train = DATASET_PATH + 'images/train/resized{}.jpg'.format(IMAGE_INDEX)  # 相对于目录的图片
+label = DATASET_PATH + 'labels/train/resized{}.txt'.format(IMAGE_INDEX)  # 相对于目录的label
 screw = '/home/hao/Code/python/A10/deeplearn/tools/img.png'
-screw_img = cv2.imread(screw, cv2.IMREAD_UNCHANGED)  # 带透明度读取
 
+# 读取图片
+screw_img = cv2.imread(screw, cv2.IMREAD_UNCHANGED)  # 带透明度读取
 img = cv2.imread(train)
 print("img shape:{}".format(img.shape))
 img_width = img.shape[1]
@@ -33,14 +34,18 @@ upper1 = (80, 190, 255)
 lower2 = (60, 100, 40)
 upper2 = (90, 200, 150)
 
+# 获取遮罩
 mask1 = cv2.inRange(hsv_img, lower1, upper1)
 mask2 = cv2.inRange(hsv_img, lower2, upper2)
 mask = cv2.bitwise_and(mask1, cv2.bitwise_not(mask2))
 
+# 腐蚀膨胀
 # kernel = np.ones((5, 5), np.uint8)
 # mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)  # 开运算
 # mask = cv2.erode(mask, kernel)  # 腐蚀
 # mask = cv2.dilate(mask, kernel, iterations=1)  # 膨胀
+
+# plt绘图
 plt.figure(figsize=(15, 15))
 plt.suptitle('Dataset augmentation based on OpenCV')
 
@@ -59,11 +64,9 @@ plt.imshow(cv2.cvtColor(cv2.bitwise_and(img, img, mask=mask), cv2.COLOR_BGR2RGB)
 cv2.namedWindow("mask", cv2.WINDOW_NORMAL)
 cv2.resizeWindow("mask", 640, 480)
 cv2.imshow('mask', mask)
-# cv2.imwrite("01.png", mask)
-
+# 获取主板遮罩结束
 ########################################################
-
-# img = cv2.imread(train_image)
+# 计算已标注区域
 data = np.loadtxt(label, dtype=float)  # [label][x%][y%][w%][h%]
 percent_x = 0
 percent_y = 0
@@ -82,7 +85,7 @@ nx = ny = line_x = line_y = 0
 if exist:
     nx = int(img.shape[1] / step)
     ny = int(img.shape[0] / step)
-    line_x = nx - 1
+    line_x = nx - 1  # n-1条线
     line_y = ny - 1
 else:
     print("There is NO target label index, check your label file:", label)
@@ -105,21 +108,23 @@ for item in data:
             boxes[y, x] = 0
 
 # 建立以(1/nx,1/ny)为原点的分割线坐标系map01
-map01 = np.zeros((line_y, line_x), np.uint8)  # n-1条线
-near = 5
+map_raw = np.zeros((line_y, line_x), np.uint8)
+near = 5  # 一个点的上下左右near个像素的4个点
 for y in range(line_y):
     for x in range(line_x):
         # if step * x > img.shape[1] or step * y > img.shape[0]:
         #     break
         point_x = int(step * (x + 1))
         point_y = int(step * (y + 1))
-        map01[y, x] = 3 <= np.sum([mask[point_y, point_x] > 0,
-                                   mask[point_y + near, point_x + near] > 0,
-                                   mask[point_y - near, point_x - near] > 0,
-                                   mask[point_y + near, point_x - near] > 0,
-                                   mask[point_y - near, point_x + near] > 0]
-                                  )
+        # 上下左右中有几个点在mask中
+        map_raw[y, x] = 3 <= np.sum([mask[point_y, point_x] > 0,
+                                     mask[point_y + near, point_x + near] > 0,
+                                     mask[point_y - near, point_x - near] > 0,
+                                     mask[point_y + near, point_x - near] > 0,
+                                     mask[point_y - near, point_x + near] > 0]
+                                    )
 
+# 网格过滤器
 grid_filter = np.zeros((line_y, line_x), np.uint8)
 isOne = False
 for y in range(line_y):
@@ -130,53 +135,55 @@ for y in range(line_y):
     if line_x % 2 == 0:
         isOne = not isOne
 
-result = map01 * grid_filter * boxes
+# 计算可行图
+map_available = map_raw * grid_filter * boxes
 
-plt.subplot(335), plt.title("raw area")
-plt.imshow(cv2.cvtColor(map01 * 255, cv2.COLOR_GRAY2RGB))
+plt.subplot(335), plt.title("raw map")
+plt.imshow(cv2.cvtColor(map_raw * 255, cv2.COLOR_GRAY2RGB))
 
-plt.subplot(336), plt.title("labeled area")
+plt.subplot(336), plt.title("labeled map")
 plt.imshow(cv2.cvtColor(boxes * 255, cv2.COLOR_GRAY2RGB))
 
-plt.subplot(337), plt.title("grid filter")
+plt.subplot(337), plt.title("grid map")
 plt.imshow(cv2.cvtColor(grid_filter * 255, cv2.COLOR_GRAY2RGB))
 
-plt.subplot(338), plt.title("available area")
-plt.imshow(cv2.cvtColor(result * 255, cv2.COLOR_GRAY2RGB))
+plt.subplot(338), plt.title("available map")
+plt.imshow(cv2.cvtColor(map_available * 255, cv2.COLOR_GRAY2RGB))
 
-points = []
-baned_points = []
-padding = 1
-blk = np.zeros(img.shape, np.uint8)
+points = []  # 可行点
+baned_points = []  # 已经在标注区域内的点
+padding = 1  # 图片四边留空padding个格
+cover = np.zeros(img.shape, np.uint8)  # 覆盖层，覆盖在原图显示预览
 for y in range(padding, line_y - padding):
     for x in range(padding, line_x - padding):
         pointx = (x + 1) * step  # 以(1/nx,1/ny)为原点
         pointy = (y + 1) * step
-        cv2.line(blk, (pointx, 0), (pointx, img.shape[0]), [0, 0, 255], 2)
-        cv2.line(blk, (0, pointy), (img.shape[1], pointy), [0, 0, 255], 2)
-        cv2.putText(blk, str(x), (pointx, 30), cv2.FONT_HERSHEY_DUPLEX, 1, (0, 255, 0), 3)
-        cv2.putText(blk, str(y), (0, pointy), cv2.FONT_HERSHEY_DUPLEX, 1, (0, 255, 0), 3)
-        if result[y, x] == 1:
+        cv2.line(cover, (pointx, 0), (pointx, img.shape[0]), [0, 0, 255], 2)
+        cv2.line(cover, (0, pointy), (img.shape[1], pointy), [0, 0, 255], 2)
+        cv2.putText(cover, str(x), (pointx, 30), cv2.FONT_HERSHEY_DUPLEX, 1, (0, 255, 0), 3)
+        cv2.putText(cover, str(y), (0, pointy), cv2.FONT_HERSHEY_DUPLEX, 1, (0, 255, 0), 3)
+        if map_available[y, x] == 1:
             points.append([pointy, pointx])
-            print("add available point: x={}, y={}".format(pointx, pointy))
+            # print("add available point: x={}, y={}".format(pointx, pointy))
         elif boxes[y, x] == 0:
             baned_points.append([pointy, pointx])
 
 print("available points:", len(points))
 
-screw_size_x = int(step / 2)
-screw_size_y = int(step / 2)
-count = 0
+# 生成预览图
+screw_size_x = int(step / 2)  # 插入图横向大小（像素）
+screw_size_y = int(step / 2)  # 插入图纵向大小（像素）
+count = 0  # 螺丝计数
 for start in points:
-    blk[(start[0] - screw_size_y):(start[0] + screw_size_y), (start[1] - screw_size_x):(start[1] + screw_size_x)] \
+    cover[(start[0] - screw_size_y):(start[0] + screw_size_y), (start[1] - screw_size_x):(start[1] + screw_size_x)] \
         = [0, 255, 0]
     count += 1
-    cv2.putText(blk, str(count), (start[1], start[0]), cv2.FONT_HERSHEY_DUPLEX, .7, (255, 255, 255), 3)
+    cv2.putText(cover, str(count), (start[1], start[0]), cv2.FONT_HERSHEY_DUPLEX, .7, (255, 255, 255), 3)
 for start in baned_points:
-    blk[(start[0] - screw_size_y):(start[0] + screw_size_y), (start[1] - screw_size_x):(start[1] + screw_size_x)] \
+    cover[(start[0] - screw_size_y):(start[0] + screw_size_y), (start[1] - screw_size_x):(start[1] + screw_size_x)] \
         = [255, 0, 0]
-preview_img = cv2.addWeighted(img, 1.0, blk, 0.5, 1)
 
+preview_img = cv2.addWeighted(img, 1.0, cover, 0.5, 1)
 cv2.namedWindow('preview', cv2.WINDOW_NORMAL)
 cv2.resizeWindow('preview', 640, 480)
 cv2.imshow('preview', preview_img)
@@ -184,6 +191,7 @@ cv2.imshow('preview', preview_img)
 plt.subplot(339), plt.title("preview")
 plt.imshow(cv2.cvtColor(preview_img, cv2.COLOR_BGR2RGB))
 
+# 加螺丝，生成最终结果图、对应的yolo数据集label.txt
 result_img = img
 labels = []
 label_num = 6
@@ -203,24 +211,27 @@ for point in points:
 
 for idx in range(len(labels)):
     for col in range(1, 3):
-        labels[idx][col] = format(labels[idx][col], '.6f')
+        labels[idx][col] = format(labels[idx][col], '.6f')  # 格式化成为6位小数
     for col in range(3, 5):
         labels[idx][col] = format(labels[idx][col] / 100, '.6f')
 
 print("labels:{}...".format(labels[:2]))
+
 cv2.namedWindow('result', cv2.WINDOW_NORMAL)
 cv2.resizeWindow('result', 640, 480)
 cv2.imshow('result', result_img)
 
+# 保存label
 label_file_name = "{}.txt".format(IMAGE_INDEX)
 print("saving labels: {}".format(label_file_name))
 np.savetxt(label_file_name, X=labels, fmt='%s')
 
+# 保存已处理图片
 output_img_name = "{}.png".format(IMAGE_INDEX)
 print("saving output image: {}".format(output_img_name))
 cv2.imwrite(output_img_name, result_img)
 
-# plt.show()
+plt.show()
 
 cv2.waitKey()
 cv2.destroyAllWindows()

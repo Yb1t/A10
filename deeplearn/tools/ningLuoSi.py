@@ -267,7 +267,6 @@ if __name__ == '__main__':
     Screw = '/home/hao/Code/python/A10/deeplearn/tools/img.png'
     DATASET_PATH = '/home/hao/Downloads/dataset/'  # 源数据集目录
     Names = os.listdir(DATASET_PATH + 'images/train/')
-    # TrainPath = LabelPath = ''
     NumProcessed = 0
     for name in Names:
         start_time = perf_counter()

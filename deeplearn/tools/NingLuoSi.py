@@ -182,17 +182,15 @@ def get_points(available_map, labeled_filter):
 # 生成预览图
 def get_preview(points, baned_points, source_img):
     cover = np.zeros(source_img.shape, np.uint8)
-    screw_size_x = int(Step / 2)  # 插入图横向大小（像素）
-    screw_size_y = int(Step / 2)  # 插入图纵向大小（像素）
+    screw_w = int(Step / 2)  # 插入图横向大小（像素）
+    screw_h = int(Step / 2)  # 插入图纵向大小（像素）
     count = 0  # 螺丝计数
     for start in points:
-        cover[(start[0] - screw_size_y):(start[0] + screw_size_y), (start[1] - screw_size_x):(start[1] + screw_size_x)] \
-            = [0, 255, 0]
+        cover[(start[0] - screw_h):(start[0] + screw_h), (start[1] - screw_w):(start[1] + screw_w)] = [0, 255, 0]
         count += 1
         cv2.putText(cover, str(count), (start[1], start[0]), cv2.FONT_HERSHEY_DUPLEX, .7, (255, 255, 255), 3)
     for start in baned_points:
-        cover[(start[0] - screw_size_y):(start[0] + screw_size_y), (start[1] - screw_size_x):(start[1] + screw_size_x)] \
-            = [255, 0, 0]
+        cover[(start[0] - screw_h):(start[0] + screw_h), (start[1] - screw_w):(start[1] + screw_w)] = [255, 0, 0]
     preview_img = cv2.addWeighted(source_img, 1.0, cover, 0.5, 1)
     if IS_DRAW_PLT:
         plt.subplot(339), plt.title("preview")
@@ -216,13 +214,12 @@ def get_result(available_points):
             result_img[y_from:y_to, x_from:x_to, c] = (((1 - alpha) * result_img[y_from:y_to, x_from:x_to, c])
                                                        + (alpha * screw_img[:, :, c]))
         # [label][x%][y%][w%][h%]
-        new_labels.append([label_num, point[1] / SourceImgWidth, point[0] / SourceImgHeight, SourceImgWidth / Step,
-                           SourceImgHeight / Step])
-    for idx in range(len(new_labels)):
-        for col in range(1, 3):
-            new_labels[idx][col] = format(new_labels[idx][col], '.6f')  # 格式化成为6位小数
-        for col in range(3, 5):
-            new_labels[idx][col] = format(new_labels[idx][col] / 100, '.6f')
+        new_labels.append([label_num,
+                           point[1] / SourceImgWidth / 100,
+                           point[0] / SourceImgHeight / 100,
+                           SourceImgWidth / Step / 100,
+                           SourceImgHeight / Step / 100
+                           ])
     print("new label(s):", len(new_labels))
     return result_img, new_labels
 
@@ -236,7 +233,11 @@ def save(result_img, new_labels):
     if not os.path.exists(new_label_dir):
         os.makedirs(new_label_dir)
     # 保存label
-    labels_save = np.append(LabelData, new_labels)
+    labels_save = LabelData.tolist() + new_labels
+    for idx in range(len(labels_save)):
+        labels_save[idx][0] = int(labels_save[idx][0])
+        for col in range(1, 5):
+            labels_save[idx][col] = format(labels_save[idx][col], '.6f')  # 格式化成为6位小数
     label_file_name = "{}.txt".format(NameNoExt)
     print("saving labels:", label_file_name)
     np.savetxt(new_label_dir + label_file_name, X=labels_save, fmt='%s')
@@ -246,6 +247,7 @@ def save(result_img, new_labels):
     output_img_name = "{}.jpg".format(NameNoExt)
     print("saving output image: {}".format(output_img_name))
     cv2.imwrite(new_img_dir + output_img_name, result_img)
+    print("result image saved:", new_img_dir + output_img_name)
 
 
 # 在窗口中显示图片
@@ -257,11 +259,11 @@ def show_img_in_window(title, img):
 
 
 if __name__ == '__main__':
-    IS_DRAW_PLT = True
-    IS_SHOW_RESULT = True
-    IS_SHOW_MASK = True
-    IS_PREVIEW = True
-    IS_SAVE = True
+    IS_DRAW_PLT = False
+    IS_SHOW_RESULT = False
+    IS_SHOW_MASK = False
+    IS_PREVIEW = False
+    IS_SAVE = False
     Screw = '/home/hao/Code/python/A10/deeplearn/tools/img.png'
     DATASET_PATH = '/home/hao/Downloads/dataset/'  # 源数据集目录
     Names = os.listdir(DATASET_PATH + 'images/train/')

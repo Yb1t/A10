@@ -1,10 +1,11 @@
 """
 数据集增强，opencv二值化图像获取主板绿色区域，保护已标记区域，网格找点覆盖螺丝等图像(png)
 """
-
+import os
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
+from time import perf_counter
 
 
 # 获取主板遮罩
@@ -15,8 +16,7 @@ def get_mask(img):
     # blur0=cv2.medianBlur(blur,5)
     # blur1= cv2.GaussianBlur(blur0,(5,5),0)
     # blur2= cv2.bilateralFilter(blur1,9,75,75)
-    rgb_img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    hsv_img = cv2.cvtColor(rgb_img, cv2.COLOR_RGB2HSV)
+    hsv_img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
 
     # 主板绿
     lower1 = (30, 50, 40)
@@ -42,15 +42,14 @@ def get_mask(img):
         plt.figure(figsize=(15, 15))
         plt.suptitle('Dataset augmentation based on OpenCV')
         plt.subplot(331), plt.title("source image")
-        plt.imshow(rgb_img)
+        plt.imshow(cv2.cvtColor(SourceImg, cv2.COLOR_BGR2RGB))
         plt.subplot(332), plt.title("green mask")
         plt.imshow(mask1, cmap="gray")
         plt.subplot(333), plt.title("desk green mask")
         plt.imshow(mask2, cmap="gray")
-        plt.subplot(334), plt.title("result")
+        plt.subplot(334), plt.title("total mask")
         plt.imshow(cv2.cvtColor(cv2.bitwise_and(img, img, mask=mask), cv2.COLOR_BGR2RGB))
-    if IS_SHOW_CV:
-        show_img_in_window('mask', mask)
+
     return mask
 
 
@@ -69,7 +68,7 @@ def get_step(label_data):
             percent_x = (item[3] + percent_x) / 2
             percent_y = (item[4] + percent_y) / 2
     if not exist:
-        print("There is NO target label index, check your label file:", LABEL)
+        print("There is NO target label index, check your label file:", LabelPath)
         print("exiting...")
         exit(1)
     step = int((percent_x + percent_y) / 2 * (SourceImg.shape[1] + SourceImg.shape[0]) / 2)
@@ -176,7 +175,7 @@ def get_points(available_map, labeled_filter):
                 # print("add available point: x={}, y={}".format(pointx, pointy))
             elif labeled_filter[y, x] == 0:
                 baned_points.append([pointy, pointx])
-    print("number of available point(s):", len(points))
+    print("available point(s):", len(points))
     return points, baned_points
 
 
@@ -195,20 +194,18 @@ def get_preview(points, baned_points, source_img):
         cover[(start[0] - screw_size_y):(start[0] + screw_size_y), (start[1] - screw_size_x):(start[1] + screw_size_x)] \
             = [255, 0, 0]
     preview_img = cv2.addWeighted(source_img, 1.0, cover, 0.5, 1)
-    if IS_SHOW_CV:
-        show_img_in_window('preview', preview_img)
     if IS_DRAW_PLT:
         plt.subplot(339), plt.title("preview")
         plt.imshow(cv2.cvtColor(preview_img, cv2.COLOR_BGR2RGB))
     return preview_img
 
 
-# 加螺丝，生成最终结果图、对应的yolo数据集label.txt
-def get_result(points):
+# 加螺丝，生成最终结果图、对应的新yolo数据集label
+def get_result(available_points):
     result_img = SourceImg
-    labels = []
+    new_labels = []
     label_num = 6
-    for point in points:
+    for point in available_points:
         x_from = point[1] - Step // 2
         y_from = point[0] - Step // 2
         x_to = x_from + Step
@@ -219,66 +216,100 @@ def get_result(points):
             result_img[y_from:y_to, x_from:x_to, c] = (((1 - alpha) * result_img[y_from:y_to, x_from:x_to, c])
                                                        + (alpha * screw_img[:, :, c]))
         # [label][x%][y%][w%][h%]
-        labels.append([label_num, point[1] / SourceImgWidth, point[0] / SourceImgHeight, SourceImgWidth / Step,
-                       SourceImgHeight / Step])
-    for idx in range(len(labels)):
+        new_labels.append([label_num, point[1] / SourceImgWidth, point[0] / SourceImgHeight, SourceImgWidth / Step,
+                           SourceImgHeight / Step])
+    for idx in range(len(new_labels)):
         for col in range(1, 3):
-            labels[idx][col] = format(labels[idx][col], '.6f')  # 格式化成为6位小数
+            new_labels[idx][col] = format(new_labels[idx][col], '.6f')  # 格式化成为6位小数
         for col in range(3, 5):
-            labels[idx][col] = format(labels[idx][col] / 100, '.6f')
-    print("labels:{}...".format(labels[:2]))
-    if IS_SHOW_CV:
-        show_img_in_window('result', result_img)
+            new_labels[idx][col] = format(new_labels[idx][col] / 100, '.6f')
+    print("new label(s):", len(new_labels))
+    return result_img, new_labels
+
+
+# 保存结果
+def save(result_img, new_labels):
+    new_img_dir = DATASET_PATH + 'images_augmented/train/'
+    new_label_dir = DATASET_PATH + 'labels_augmented/train/'
+    if not os.path.exists(new_img_dir):
+        os.makedirs(new_img_dir)
+    if not os.path.exists(new_label_dir):
+        os.makedirs(new_label_dir)
     # 保存label
-    label_file_name = "{}.txt".format(IMAGE_INDEX)
-    print("saving labels: {}".format(label_file_name))
-    np.savetxt(label_file_name, X=labels, fmt='%s')
+    labels_save = np.append(LabelData, new_labels)
+    label_file_name = "{}.txt".format(NameNoExt)
+    print("saving labels:", label_file_name)
+    np.savetxt(new_label_dir + label_file_name, X=labels_save, fmt='%s')
+    print("{} labels saved: {} old label(s), {} new label(s)".format(
+        len(LabelData) + len(new_labels), len(LabelData), len(new_labels)))
     # 保存已处理图片
-    output_img_name = "{}.png".format(IMAGE_INDEX)
+    output_img_name = "{}.jpg".format(NameNoExt)
     print("saving output image: {}".format(output_img_name))
-    cv2.imwrite(output_img_name, result_img)
+    cv2.imwrite(new_img_dir + output_img_name, result_img)
 
 
 # 在窗口中显示图片
 def show_img_in_window(title, img):
+    title = "[{}] {}".format(NameNoExt, title)
     cv2.namedWindow(title, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(title, 640, 480)
     cv2.imshow(title, img)
 
 
 if __name__ == '__main__':
-    IS_DRAW_PLT = False
-    IS_SHOW_CV = True
+    IS_DRAW_PLT = True
+    IS_SHOW_RESULT = True
+    IS_SHOW_MASK = True
     IS_PREVIEW = True
-    IMAGE_INDEX = 88
-    DATASET_PATH = '/home/hao/Code/python/A10/datasets/board96/'  # 源数据集目录
-    train = DATASET_PATH + 'images/train/resized{}.jpg'.format(IMAGE_INDEX)  # 相对于目录的图片
-    LABEL = DATASET_PATH + 'labels/train/resized{}.txt'.format(IMAGE_INDEX)  # 相对于目录的label
+    IS_SAVE = True
     Screw = '/home/hao/Code/python/A10/deeplearn/tools/img.png'
+    DATASET_PATH = '/home/hao/Downloads/dataset/'  # 源数据集目录
+    Names = os.listdir(DATASET_PATH + 'images/train/')
+    # TrainPath = LabelPath = ''
+    NumProcessed = 0
+    for name in Names:
+        start_time = perf_counter()
+        NumProcessed += 1
+        print("processing ({}/{}) ...".format(NumProcessed, len(Names)))
+        NameNoExt = name.split('.')[0]
+        Ext = name.split('.')[-1]
+        ImagePath = DATASET_PATH + 'images/train/' + name
+        LabelPath = DATASET_PATH + 'labels/train/' + NameNoExt + '.txt'
 
-    SourceImg = cv2.imread(train)  # 原图
-    ScrewImg = cv2.imread(Screw, cv2.IMREAD_UNCHANGED)  # 螺丝图，带透明度
-    SourceImgWidth = SourceImg.shape[1]
-    SourceImgHeight = SourceImg.shape[0]
+        SourceImg = cv2.imread(ImagePath)  # 原图
+        ScrewImg = cv2.imread(Screw, cv2.IMREAD_UNCHANGED)  # 螺丝图，带透明度
+        SourceImgWidth = SourceImg.shape[1]
+        SourceImgHeight = SourceImg.shape[0]
 
-    LabelData = np.loadtxt(LABEL, dtype=float)
-    Mask = get_mask(SourceImg)
-    Step = get_step(LabelData)
-    NX, NY, LineNumX, LineNumY = get_n_line_num(Step)
-    MapRaw = get_raw_map(Mask)
-    FilterLabeled = get_labeled_filter(LabelData, NX, NY, LineNumX, LineNumY)
-    FilterGrid = get_grid_filter(LineNumX, LineNumY)
-    MapAvailable = get_available_map(MapRaw, FilterGrid, FilterLabeled)
-    PointsAvailable, PointsBaned = get_points(MapAvailable, FilterLabeled)
-    if IS_PREVIEW:
-        Preview = get_preview(PointsAvailable, PointsBaned, SourceImg)
-    get_result(PointsAvailable)
+        LabelData = np.loadtxt(LabelPath, dtype=float)
+        Mask = get_mask(SourceImg)
+        if IS_SHOW_MASK:
+            show_img_in_window('mask', Mask)
+        Step = get_step(LabelData)
+        NX, NY, LineNumX, LineNumY = get_n_line_num(Step)
+        MapRaw = get_raw_map(Mask)
+        FilterLabeled = get_labeled_filter(LabelData, NX, NY, LineNumX, LineNumY)
+        FilterGrid = get_grid_filter(LineNumX, LineNumY)
+        MapAvailable = get_available_map(MapRaw, FilterGrid, FilterLabeled)
+        PointsAvailable, PointsBaned = get_points(MapAvailable, FilterLabeled)
+        if IS_PREVIEW:
+            Preview = get_preview(PointsAvailable, PointsBaned, SourceImg)
+            show_img_in_window('preview', Preview)
+        ImgResult, LabelsNew = get_result(PointsAvailable)
 
-    if IS_DRAW_PLT:
-        plt.show()
+        if IS_SAVE:
+            save(ImgResult, LabelsNew)
 
-    if IS_SHOW_CV:
+        print("consume time:", perf_counter() - start_time)
+
+        if IS_DRAW_PLT:
+            plt.show()
+
+        if IS_SHOW_RESULT:
+            show_img_in_window('result', ImgResult)
         cv2.waitKey()
         cv2.destroyAllWindows()
+
+        print("---" * 20)
 
     exit(0)

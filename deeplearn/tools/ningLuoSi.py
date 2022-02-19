@@ -1,5 +1,5 @@
 """
-数据集增强，opencv二值化图像获取主板绿色区域，保护已标记区域，网格找点覆盖螺丝等图像(png)
+数据集增强，opencv二值化图像获取主板绿色区域，保护已标记区域，网格找点覆盖透视变换后的螺丝等图像（3通道）
 """
 import os
 import cv2
@@ -198,6 +198,50 @@ def get_preview(points, baned_points, source_img):
     return preview_img
 
 
+# 由坐标生成透视变化后的螺丝
+def get_screw(screw_img, x, y):
+    w = screw_img.shape[1]
+    h = screw_img.shape[0]
+
+    hsv_img = cv2.cvtColor(screw_img, cv2.COLOR_BGR2HSV)
+    # 主板绿
+    lower1 = (30, 50, 40)
+    upper1 = (80, 190, 255)
+    alpha_channel = cv2.bitwise_not(cv2.inRange(hsv_img, lower1, upper1))
+    b_channel, g_channel, r_channel = cv2.split(screw_img)
+    screw_img_rgba = cv2.merge((b_channel, g_channel, r_channel, alpha_channel))
+
+    # 原图中卡片在左上、右上、左下、右下的四个角点
+    pts1 = np.float32([[0, 0], [w, 0], [0, h], [w, h]])
+
+    perc_y = (y - SourceImgHeight / 2) / SourceImgHeight  # y到水平中轴距离占图片竖轴百分比，-0.5~0.5
+    top_span = w * (.5 - perc_y) * .5 * .2  # 原图片的左上角(0,0)移到(top_span,0)，以此类推
+    bottom_span = w * (.5 + perc_y) * .5 * .2
+    # 变换后分别四个点
+    change4y = np.float32([[top_span, 0], [w - top_span, 0], [bottom_span, h], [w - bottom_span, h]])  # up
+    # print("top_span{}/{},bottom_span{}/{}".format(top_span, w, bottom_span, w))
+
+    perc_x = (x - SourceImgWidth / 2) / SourceImgWidth  # x到竖直中轴距离占图片横轴百分比，-0.5~0.5
+    left_span = h * (.5 - perc_x) * .5 * .2
+    right_span = h * (.5 + perc_x) * .5 * .2
+    change4x = np.float32([[0, left_span], [w, right_span], [0, w - left_span], [w, h - right_span]])  # up
+    # print("left_span{}/{},right_span{}/{}".format(left_span, h, right_span, h))
+
+    # 生成透视变换矩阵
+    metric_y = cv2.getPerspectiveTransform(pts1, change4y)
+    metric_x = cv2.getPerspectiveTransform(pts1, change4x)
+    # 进行透视变换，规定目标图像大小
+    res_y = cv2.warpPerspective(screw_img_rgba, metric_y, (w, h))
+    res_y_x = cv2.warpPerspective(res_y, metric_x, (w, h))
+
+    # cv2.imshow('img {} {}'.format(x, y), screw_img_rgba)
+    # cv2.imshow('res_y {} {}'.format(x, y), res_y)
+    # cv2.imshow('res_y_x {} {}'.format(x, y), res_y_x)
+    # cv2.waitKey()
+
+    return res_y_x
+
+
 # 加螺丝，生成最终结果图、对应的新yolo数据集label
 def get_result(available_points):
     result_img = SourceImg
@@ -208,8 +252,11 @@ def get_result(available_points):
         y_from = point[0] - Step // 2
         x_to = x_from + Step
         y_to = y_from + Step
-        screw_img = cv2.resize(ScrewImg, (Step, Step))
+        screw_alpha = get_screw(ScrewImg, point[1], point[0])
+        screw_img = cv2.resize(screw_alpha, (Step, Step))
         alpha = screw_img[:, :, 3] / 255
+        # cv2.imshow('t',alpha)
+        # cv2.waitKey()
         for c in range(3):
             result_img[y_from:y_to, x_from:x_to, c] = (((1 - alpha) * result_img[y_from:y_to, x_from:x_to, c])
                                                        + (alpha * screw_img[:, :, c]))
@@ -244,10 +291,11 @@ def save(result_img, new_labels):
     print("{} labels saved: {} old label(s), {} new label(s)".format(
         len(LabelData) + len(new_labels), len(LabelData), len(new_labels)))
     # 保存已处理图片
-    output_img_name = "{}.jpg".format(NameNoExt)
-    print("saving output image: {}".format(output_img_name))
-    cv2.imwrite(new_img_dir + output_img_name, result_img)
-    print("result image saved:", new_img_dir + output_img_name)
+    show_img_in_window('', result_img)
+    # output_img_name = "{}.jpg".format(NameNoExt)
+    # print("saving output image: {}".format(output_img_name))
+    # cv2.imwrite(new_img_dir + output_img_name, result_img)
+    # print("result image saved:", new_img_dir + output_img_name)
 
 
 # 在窗口中显示图片
@@ -263,8 +311,8 @@ if __name__ == '__main__':
     IS_SHOW_RESULT = False
     IS_SHOW_MASK = False
     IS_PREVIEW = False
-    IS_SAVE = False
-    Screw = '/home/hao/Code/python/A10/deeplearn/tools/img.png'
+    IS_SAVE = True
+    Screw = 'screw.png'
     DATASET_PATH = '/home/hao/Downloads/dataset/'  # 源数据集目录
     Names = os.listdir(DATASET_PATH + 'images/train/')
     NumProcessed = 0

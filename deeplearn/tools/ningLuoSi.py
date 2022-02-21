@@ -1,7 +1,8 @@
 """
-数据集增强，opencv二值化图像获取主板绿色区域，保护已标记区域，网格找点覆盖透视变换后的螺丝等图像（3通道）
+数据集增强，opencv二值化图像获取主板绿色区域，保护已标记区域，网格找点，覆盖进行亮度自适应、透视变换后的螺丝等图像（3通道）
 """
 import os
+import random
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
@@ -58,13 +59,15 @@ def get_step(label_data):
     percent_x = 0
     percent_y = 0
     exist = False
-    print("calculating box size with item(s):")
+    if IS_DEBUG:
+        print("calculating box size with item(s):")
     # label data: [label][x%][y%][w%][h%]
     for item in label_data:
         # 计算平均标注大小（百分比）
         if item[0] == 6.0 or item[0] == 0 or item[0] == 1.0:
             exist = True
-            print(item)
+            if IS_DEBUG:
+                print(item)
             percent_x = (item[3] + percent_x) / 2
             percent_y = (item[4] + percent_y) / 2
     if not exist:
@@ -97,7 +100,8 @@ def get_labeled_filter(label_data, nx, ny, line_x, line_y):
         y_width = ny * item[4]
         lower = [min(round(x - x_width), line_x), min(round(y - y_width), line_y)]  # 不 /2 ，为原标记2倍大小
         upper = [min(round(x + x_width), line_x), min(round(y + y_width), line_y)]
-        print("excluding labeled area:from {} to {}".format(lower, upper))
+        if IS_DEBUG:
+            print("excluding labeled area:from {} to {}".format(lower, upper))
         for y in range(lower[1], upper[1]):
             for x in range(lower[0], upper[0]):
                 # print(x, y)
@@ -200,13 +204,26 @@ def get_preview(points, baned_points, source_img):
 
 # 由坐标生成透视变化后的螺丝
 def get_screw(screw_img, x, y):
-    w = screw_img.shape[1]
-    h = screw_img.shape[0]
-
-    hsv_img = cv2.cvtColor(screw_img, cv2.COLOR_BGR2HSV)
     # 主板绿
     lower1 = (30, 50, 40)
     upper1 = (80, 190, 255)
+    w = screw_img.shape[1]
+    h = screw_img.shape[0]
+    r = Step // 2
+    hsv = cv2.cvtColor(SourceImg[x - r:x + r, y - r:y + r], cv2.COLOR_BGR2HSV)
+    v_channel = cv2.split(hsv)[2]
+    v = v_channel.ravel()[np.flatnonzero(v_channel)]  # 亮度非零的值
+    average_v = sum(v) / len(v)  # 平均亮度0-255
+    if IS_DEBUG:
+        print("({},{}) average_value: {}".format(x, y, average_v))
+    alpha = 1  # 对比度
+    beta = (average_v - 255 / 2)  # 亮度
+    screw_img = np.uint8(np.clip((alpha * (np.int16(screw_img) + beta)), 0, 255))
+
+    center = (w / 2, h / 2)
+    rotate_matrix = cv2.getRotationMatrix2D(center, random.randint(0, 90), 1)
+    screw_img = cv2.warpAffine(screw_img, rotate_matrix, (w, h), borderValue=lower1)
+    hsv_img = cv2.cvtColor(screw_img, cv2.COLOR_BGR2HSV)
     alpha_channel = cv2.bitwise_not(cv2.inRange(hsv_img, lower1, upper1))
     b_channel, g_channel, r_channel = cv2.split(screw_img)
     screw_img_rgba = cv2.merge((b_channel, g_channel, r_channel, alpha_channel))
@@ -214,16 +231,17 @@ def get_screw(screw_img, x, y):
     # 原图中卡片在左上、右上、左下、右下的四个角点
     pts1 = np.float32([[0, 0], [w, 0], [0, h], [w, h]])
 
+    trans_strength = .3  # 透视变换强度
     perc_y = (y - SourceImgHeight / 2) / SourceImgHeight  # y到水平中轴距离占图片竖轴百分比，-0.5~0.5
-    top_span = w * (.5 - perc_y) * .5 * .2  # 原图片的左上角(0,0)移到(top_span,0)，以此类推
-    bottom_span = w * (.5 + perc_y) * .5 * .2
+    top_span = w * (.5 - perc_y) * .5 * trans_strength  # 原图片的左上角(0,0)移到(top_span,0)，以此类推
+    bottom_span = w * (.5 + perc_y) * .5 * trans_strength
     # 变换后分别四个点
     change4y = np.float32([[top_span, 0], [w - top_span, 0], [bottom_span, h], [w - bottom_span, h]])  # up
     # print("top_span{}/{},bottom_span{}/{}".format(top_span, w, bottom_span, w))
 
     perc_x = (x - SourceImgWidth / 2) / SourceImgWidth  # x到竖直中轴距离占图片横轴百分比，-0.5~0.5
-    left_span = h * (.5 - perc_x) * .5 * .2
-    right_span = h * (.5 + perc_x) * .5 * .2
+    left_span = h * (.5 - perc_x) * .5 * trans_strength
+    right_span = h * (.5 + perc_x) * .5 * trans_strength
     change4x = np.float32([[0, left_span], [w, right_span], [0, w - left_span], [w, h - right_span]])  # up
     # print("left_span{}/{},right_span{}/{}".format(left_span, h, right_span, h))
 
@@ -255,11 +273,13 @@ def get_result(available_points):
         screw_alpha = get_screw(ScrewImg, point[1], point[0])
         screw_img = cv2.resize(screw_alpha, (Step, Step))
         alpha = screw_img[:, :, 3] / 255
-        # cv2.imshow('t',alpha)
-        # cv2.waitKey()
         for c in range(3):
             result_img[y_from:y_to, x_from:x_to, c] = (((1 - alpha) * result_img[y_from:y_to, x_from:x_to, c])
                                                        + (alpha * screw_img[:, :, c]))
+        if IS_DEBUG:
+            cv2.putText(result_img, "({},{})".format(point[1], point[0]), (point[1], point[0]), cv2.FONT_HERSHEY_DUPLEX,
+                        .5,
+                        (0, 0, 255), 1)
         # [label][x%][y%][w%][h%]
         new_labels.append([label_num,
                            point[1] / SourceImgWidth / 100,
@@ -267,7 +287,6 @@ def get_result(available_points):
                            SourceImgWidth / Step / 100,
                            SourceImgHeight / Step / 100
                            ])
-    print("new label(s):", len(new_labels))
     return result_img, new_labels
 
 
@@ -291,11 +310,10 @@ def save(result_img, new_labels):
     print("{} labels saved: {} old label(s), {} new label(s)".format(
         len(LabelData) + len(new_labels), len(LabelData), len(new_labels)))
     # 保存已处理图片
-    show_img_in_window('', result_img)
-    # output_img_name = "{}.jpg".format(NameNoExt)
-    # print("saving output image: {}".format(output_img_name))
-    # cv2.imwrite(new_img_dir + output_img_name, result_img)
-    # print("result image saved:", new_img_dir + output_img_name)
+    output_img_name = "{}.jpg".format(NameNoExt)
+    print("saving output image: {}".format(output_img_name))
+    cv2.imwrite(new_img_dir + output_img_name, result_img)
+    print("result image saved:", new_img_dir + output_img_name)
 
 
 # 在窗口中显示图片
@@ -312,6 +330,7 @@ if __name__ == '__main__':
     IS_SHOW_MASK = False
     IS_PREVIEW = False
     IS_SAVE = True
+    IS_DEBUG = False
     Screw = 'screw.png'
     DATASET_PATH = '/home/hao/Downloads/dataset/'  # 源数据集目录
     Names = os.listdir(DATASET_PATH + 'images/train/')
@@ -348,6 +367,9 @@ if __name__ == '__main__':
 
         if IS_SAVE:
             save(ImgResult, LabelsNew)
+
+        if IS_DEBUG:
+            show_img_in_window("result", ImgResult)
 
         print("consume time:", perf_counter() - start_time)
 

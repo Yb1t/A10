@@ -209,8 +209,9 @@ def get_screw(screw_img, x, y):
     upper1 = (80, 190, 255)
     w = screw_img.shape[1]
     h = screw_img.shape[0]
+    # 自适应亮度
     r = Step // 2
-    hsv = cv2.cvtColor(SourceImg[x - r:x + r, y - r:y + r], cv2.COLOR_BGR2HSV)
+    hsv = cv2.cvtColor(SourceImg[y - r:y + r, x - r:x + r], cv2.COLOR_BGR2HSV)
     v_channel = cv2.split(hsv)[2]
     v = v_channel.ravel()[np.flatnonzero(v_channel)]  # 亮度非零的值
     average_v = sum(v) / len(v)  # 平均亮度0-255
@@ -219,7 +220,7 @@ def get_screw(screw_img, x, y):
     alpha = 1  # 对比度
     beta = (average_v - 255 / 2)  # 亮度
     screw_img = np.uint8(np.clip((alpha * (np.int16(screw_img) + beta)), 0, 255))
-
+    # 自动透视变换
     center = (w / 2, h / 2)
     rotate_matrix = cv2.getRotationMatrix2D(center, random.randint(0, 90), 1)
     screw_img = cv2.warpAffine(screw_img, rotate_matrix, (w, h), borderValue=lower1)
@@ -227,37 +228,35 @@ def get_screw(screw_img, x, y):
     alpha_channel = cv2.bitwise_not(cv2.inRange(hsv_img, lower1, upper1))
     b_channel, g_channel, r_channel = cv2.split(screw_img)
     screw_img_rgba = cv2.merge((b_channel, g_channel, r_channel, alpha_channel))
-
-    # 原图中卡片在左上、右上、左下、右下的四个角点
-    pts1 = np.float32([[0, 0], [w, 0], [0, h], [w, h]])
-
-    trans_strength = .3  # 透视变换强度
+    pts1 = np.float32([[0, 0], [w, 0], [0, h], [w, h]])  # 原图中卡片在左上、右上、左下、右下的四个角点
+    trans_strength = .2  # 透视变换强度
     perc_y = (y - SourceImgHeight / 2) / SourceImgHeight  # y到水平中轴距离占图片竖轴百分比，-0.5~0.5
     top_span = w * (.5 - perc_y) * .5 * trans_strength  # 原图片的左上角(0,0)移到(top_span,0)，以此类推
     bottom_span = w * (.5 + perc_y) * .5 * trans_strength
-    # 变换后分别四个点
-    change4y = np.float32([[top_span, 0], [w - top_span, 0], [bottom_span, h], [w - bottom_span, h]])  # up
+    change4y = np.float32([[top_span, 0], [w - top_span, 0], [bottom_span, h], [w - bottom_span, h]])  # 变换后分别四个点
     # print("top_span{}/{},bottom_span{}/{}".format(top_span, w, bottom_span, w))
-
     perc_x = (x - SourceImgWidth / 2) / SourceImgWidth  # x到竖直中轴距离占图片横轴百分比，-0.5~0.5
     left_span = h * (.5 - perc_x) * .5 * trans_strength
     right_span = h * (.5 + perc_x) * .5 * trans_strength
-    change4x = np.float32([[0, left_span], [w, right_span], [0, w - left_span], [w, h - right_span]])  # up
+    change4x = np.float32([[0, left_span], [w, right_span], [0, w - left_span], [w, h - right_span]])
     # print("left_span{}/{},right_span{}/{}".format(left_span, h, right_span, h))
-
-    # 生成透视变换矩阵
-    metric_y = cv2.getPerspectiveTransform(pts1, change4y)
+    metric_y = cv2.getPerspectiveTransform(pts1, change4y)  # 生成透视变换矩阵
     metric_x = cv2.getPerspectiveTransform(pts1, change4x)
-    # 进行透视变换，规定目标图像大小
-    res_y = cv2.warpPerspective(screw_img_rgba, metric_y, (w, h))
-    res_y_x = cv2.warpPerspective(res_y, metric_x, (w, h))
-
+    res_y = cv2.warpPerspective(screw_img_rgba, metric_y, (w, h))  # 进行竖直方向透视变换，规定目标图像大小
+    res_y_x = cv2.warpPerspective(res_y, metric_x, (w, h))  # 使用竖直变换后的图像进行横向透视变换，规定目标图像大小
     # cv2.imshow('img {} {}'.format(x, y), screw_img_rgba)
     # cv2.imshow('res_y {} {}'.format(x, y), res_y)
     # cv2.imshow('res_y_x {} {}'.format(x, y), res_y_x)
     # cv2.waitKey()
-
-    return res_y_x
+    # 遮罩，只留下在主板遮罩的部分
+    if IS_MIX:
+        tmp = cv2.resize(res_y_x, (r * 2, r * 2))
+        res_masked = cv2.bitwise_and(tmp, tmp, mask=Mask[y - r:y + r, x - r:x + r])
+        # cv2.imshow('res_masked {} {}'.format(x, y),res_masked)
+        # cv2.waitKey()
+        return res_masked
+    else:
+        return res_y_x
 
 
 # 加螺丝，生成最终结果图、对应的新yolo数据集label
@@ -329,8 +328,9 @@ if __name__ == '__main__':
     IS_SHOW_RESULT = False
     IS_SHOW_MASK = False
     IS_PREVIEW = False
-    IS_SAVE = True
-    IS_DEBUG = False
+    IS_MIX = False
+    IS_SAVE = False
+    IS_DEBUG = True
     Screw = 'screw.png'
     DATASET_PATH = '/home/hao/Downloads/dataset/'  # 源数据集目录
     Names = os.listdir(DATASET_PATH + 'images/train/')
@@ -338,7 +338,7 @@ if __name__ == '__main__':
     for name in Names:
         start_time = perf_counter()
         NumProcessed += 1
-        print("processing ({}/{}) ...".format(NumProcessed, len(Names)))
+        print("processing {} ({}/{}) ...".format(name, NumProcessed, len(Names)))
         NameNoExt = name.split('.')[0]
         Ext = name.split('.')[-1]
         ImagePath = DATASET_PATH + 'images/train/' + name
@@ -368,10 +368,10 @@ if __name__ == '__main__':
         if IS_SAVE:
             save(ImgResult, LabelsNew)
 
+        print("consume time:", perf_counter() - start_time)
+
         if IS_DEBUG:
             show_img_in_window("result", ImgResult)
-
-        print("consume time:", perf_counter() - start_time)
 
         if IS_DRAW_PLT:
             plt.show()

@@ -262,25 +262,38 @@ def get_screw(screw_img, x, y):
 # 加螺丝，生成最终结果图、对应的新yolo数据集label
 def get_result(available_points):
     result_img = SourceImg
+    screw_img_raw = cv2.imread(SCREWS_PATH + Screws[0])  # 螺丝图，带透明度。带透明度加参数cv2.IMREAD_UNCHANGED
     new_labels = []
-    label_num = 6
+    screws_aver = len(available_points) // len(Screws) + 1  # 数组边界处理 方法1：每张螺丝图片平均拧screws_aver
+    # 次，每个多拧一次，防止越界。缺点：最后一张螺丝会比screws_aver少
+    # screws_aver = len(available_points) // len(Screws)  # 方法2：每张螺丝图片平均拧screws_aver次,缺点：最后一张图会重复很多次，比screws_aver多
+    screw_class = -1
+    count = 0
     for point in available_points:
+        if count % screws_aver == 0:  # 方法1：拧完一个螺丝图
+            # if count % screws_aver == 0 and count // screws_aver < len(Screws):  # 方法2：拧完一个螺丝图,如果还有下一个螺丝图
+            next_screw = Screws[count // screws_aver]
+            screw_class = next_screw.split('_')[0]
+            screw_img_raw = cv2.imread(SCREWS_PATH + next_screw)  # 下一个螺丝图
+        count += 1
+        # print("ning luo si {} at {}".format(count, point))
         x_from = point[1] - Step // 2
         y_from = point[0] - Step // 2
         x_to = x_from + Step
         y_to = y_from + Step
-        screw_alpha = get_screw(ScrewImg, point[1], point[0])
+        screw_alpha = get_screw(screw_img_raw, point[1], point[0])
         screw_img = cv2.resize(screw_alpha, (Step, Step))
         alpha = screw_img[:, :, 3] / 255
         for c in range(3):
             result_img[y_from:y_to, x_from:x_to, c] = (((1 - alpha) * result_img[y_from:y_to, x_from:x_to, c])
                                                        + (alpha * screw_img[:, :, c]))
         if IS_DEBUG:
-            cv2.putText(result_img, "({},{})".format(point[1], point[0]), (point[1], point[0]), cv2.FONT_HERSHEY_DUPLEX,
+            cv2.putText(result_img, "{}({},{})".format(screw_class, point[1], point[0]), (point[1], point[0]),
+                        cv2.FONT_HERSHEY_DUPLEX,
                         .5,
                         (0, 0, 255), 1)
         # [label][x%][y%][w%][h%]
-        new_labels.append([label_num,
+        new_labels.append([screw_class,
                            point[1] / SourceImgWidth / 100,
                            point[0] / SourceImgHeight / 100,
                            SourceImgWidth / Step / 100,
@@ -304,7 +317,7 @@ def save(result_img, new_labels):
         for col in range(1, 5):
             labels_save[idx][col] = format(labels_save[idx][col], '.6f')  # 格式化成为6位小数
     label_file_name = "{}.txt".format(NameNoExt)
-    print("saving labels:", label_file_name)
+    print("saving labels:", new_label_dir + label_file_name)
     np.savetxt(new_label_dir + label_file_name, X=labels_save, fmt='%s')
     print("{} labels saved: {} old label(s), {} new label(s)".format(
         len(LabelData) + len(new_labels), len(LabelData), len(new_labels)))
@@ -325,14 +338,15 @@ def show_img_in_window(title, img):
 
 if __name__ == '__main__':
     IS_DRAW_PLT = False
-    IS_SHOW_RESULT = False
     IS_SHOW_MASK = False
     IS_PREVIEW = False
     IS_MIX = False
     IS_SAVE = False
     IS_DEBUG = True
-    Screw = 'screw.png'
     DATASET_PATH = '/home/hao/Downloads/dataset/'  # 源数据集目录
+    SCREWS_PATH = '/home/hao/Downloads/dataset/screws/'  # 螺丝目录(分类:SCREWS_PATH/0 SCREWS_PATH/1 ...)
+    Screws = os.listdir(SCREWS_PATH)
+
     Names = os.listdir(DATASET_PATH + 'images/train/')
     NumProcessed = 0
     for name in Names:
@@ -345,7 +359,7 @@ if __name__ == '__main__':
         LabelPath = DATASET_PATH + 'labels/train/' + NameNoExt + '.txt'
 
         SourceImg = cv2.imread(ImagePath)  # 原图
-        ScrewImg = cv2.imread(Screw, cv2.IMREAD_UNCHANGED)  # 螺丝图，带透明度
+        # ScrewImg = cv2.imread(SCREWS_PATH+Screws[0], cv2.IMREAD_UNCHANGED)  # 螺丝图，带透明度
         SourceImgWidth = SourceImg.shape[1]
         SourceImgHeight = SourceImg.shape[0]
 
@@ -376,8 +390,6 @@ if __name__ == '__main__':
         if IS_DRAW_PLT:
             plt.show()
 
-        if IS_SHOW_RESULT:
-            show_img_in_window('result', ImgResult)
         cv2.waitKey()
         cv2.destroyAllWindows()
 

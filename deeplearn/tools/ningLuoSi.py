@@ -64,8 +64,8 @@ def get_step(label_data):
             percent_y = (item[4] + percent_y) / 2
     if not exist:
         print("There is NO target label index, check your label file:", LabelPath)
-        print("exiting...")
-        exit(1)
+        print("skipping...")
+        return -1
     step = int((percent_x + percent_y) / 2 * (SourceImg.shape[1] + SourceImg.shape[0]) / 2)
     print("step:", step)
     return step
@@ -194,21 +194,10 @@ def get_preview(points, baned_points, source_img):
     return preview_img
 
 
-# 由坐标生成透视变化后的螺丝
+# 由坐标生成自适应亮度、透视变化、遮罩后的螺丝
 def get_screw(screw_img, x, y):
     w = screw_img.shape[1]
     h = screw_img.shape[0]
-    # 自适应亮度
-    r = Step // 2
-    hsv = cv2.cvtColor(SourceImg[y - r:y + r, x - r:x + r], cv2.COLOR_BGR2HSV)
-    v_channel = cv2.split(hsv)[2]
-    v = v_channel.ravel()[np.flatnonzero(v_channel)]  # 亮度非零的值
-    average_v = sum(v) / len(v)  # 平均亮度0-255
-    if IS_DEBUG:
-        print("({},{}) average_value: {}".format(x, y, average_v))
-    alpha = 1  # 对比度
-    beta = (average_v - 255 / 2)  # 亮度
-    screw_img = np.uint8(np.clip((alpha * (np.int16(screw_img) + beta)), 0, 255))
     # 自动透视变换
     center = (w / 2, h / 2)
     rotate_matrix = cv2.getRotationMatrix2D(center, random.randint(0, 90), 1)
@@ -237,15 +226,26 @@ def get_screw(screw_img, x, y):
     # cv2.imshow('res_y {} {}'.format(x, y), res_y)
     # cv2.imshow('res_y_x {} {}'.format(x, y), res_y_x)
     # cv2.waitKey()
+    # 自适应亮度
+    r = Step // 2
+    hsv = cv2.cvtColor(SourceImg[y - r:y + r, x - r:x + r], cv2.COLOR_BGR2HSV)
+    v_channel = cv2.split(hsv)[2]
+    v = v_channel.ravel()[np.flatnonzero(v_channel)]  # 亮度非零的值
+    average_v = sum(v) / len(v)  # 平均亮度0-255
+    if IS_DEBUG:
+        print("({},{}) average_value: {}".format(x, y, average_v))
+    alpha = 1  # 对比度
+    beta = (average_v - 255 / 2)  # 亮度
+    res_light = np.uint8(np.clip((alpha * (np.int16(res_y_x) + beta)), 0, 255))
     # 遮罩，只留下在主板遮罩的部分
     if IS_MIX:
-        tmp = cv2.resize(res_y_x, (r * 2, r * 2))
+        tmp = cv2.resize(res_light, (r * 2, r * 2))
         res_masked = cv2.bitwise_and(tmp, tmp, mask=Mask[y - r:y + r, x - r:x + r])
         # cv2.imshow('res_masked {} {}'.format(x, y),res_masked)
         # cv2.waitKey()
         return res_masked
     else:
-        return res_y_x
+        return res_light
 
 
 # 加螺丝，生成最终结果图、对应的新yolo数据集label
@@ -283,10 +283,10 @@ def get_result(available_points):
                         (0, 0, 255), 1)
         # [label][x%][y%][w%][h%]
         new_labels.append([screw_class,
-                           point[1] / SourceImgWidth / 100,
-                           point[0] / SourceImgHeight / 100,
-                           SourceImgWidth / Step / 100,
-                           SourceImgHeight / Step / 100
+                           point[1] / SourceImgWidth,
+                           point[0] / SourceImgHeight,
+                           Step / SourceImgWidth,
+                           Step / SourceImgHeight
                            ])
     return result_img, new_labels
 
@@ -330,9 +330,9 @@ if __name__ == '__main__':
     IS_SHOW_MASK = False
     IS_PREVIEW = False
     IS_MIX = False
-    IS_SAVE = False
-    IS_DEBUG = True
-    DATASET_PATH = '/home/hao/Downloads/dataset/'  # 源数据集目录
+    IS_SAVE = True
+    IS_DEBUG = False
+    DATASET_PATH = '/home/hao/Code/python/A10/datasets/board96/'  # 源数据集目录
     SCREWS_PATH = '/home/hao/Downloads/dataset/screws/'  # 螺丝目录(分类:class_index.png ...)
     Screws = os.listdir(SCREWS_PATH)
 
@@ -365,6 +365,8 @@ if __name__ == '__main__':
         if IS_SHOW_MASK:
             show_img_in_window('mask', Mask)
         Step = get_step(LabelData)
+        if Step == -1:
+            continue
         NX, NY, LineNumX, LineNumY = get_n_line_num(Step)
         MapRaw = get_raw_map(Mask)
         FilterLabeled = get_labeled_filter(LabelData, NX, NY, LineNumX, LineNumY)
@@ -389,7 +391,6 @@ if __name__ == '__main__':
 
         cv2.waitKey()
         cv2.destroyAllWindows()
-
         print("---" * 20)
 
     exit(0)

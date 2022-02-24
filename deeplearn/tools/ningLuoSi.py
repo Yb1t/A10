@@ -19,17 +19,9 @@ def get_mask(img):
     # blur2= cv2.bilateralFilter(blur1,9,75,75)
     hsv_img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
 
-    # 主板绿
-    lower1 = (30, 50, 40)
-    upper1 = (80, 190, 255)
-
-    # 桌面绿
-    lower2 = (60, 100, 40)
-    upper2 = (90, 200, 150)
-
     # 获取遮罩
-    mask1 = cv2.inRange(hsv_img, lower1, upper1)
-    mask2 = cv2.inRange(hsv_img, lower2, upper2)
+    mask1 = cv2.inRange(hsv_img, LowerBoard, UpperBoard)
+    mask2 = cv2.inRange(hsv_img, LowerDesk, UpperDesk)
     mask = cv2.bitwise_and(mask1, cv2.bitwise_not(mask2))
 
     # 腐蚀膨胀
@@ -204,9 +196,6 @@ def get_preview(points, baned_points, source_img):
 
 # 由坐标生成透视变化后的螺丝
 def get_screw(screw_img, x, y):
-    # 主板绿
-    lower1 = (30, 50, 40)
-    upper1 = (80, 190, 255)
     w = screw_img.shape[1]
     h = screw_img.shape[0]
     # 自适应亮度
@@ -223,9 +212,9 @@ def get_screw(screw_img, x, y):
     # 自动透视变换
     center = (w / 2, h / 2)
     rotate_matrix = cv2.getRotationMatrix2D(center, random.randint(0, 90), 1)
-    screw_img = cv2.warpAffine(screw_img, rotate_matrix, (w, h), borderValue=lower1)
+    screw_img = cv2.warpAffine(screw_img, rotate_matrix, (w, h), borderValue=LowerBoard)
     hsv_img = cv2.cvtColor(screw_img, cv2.COLOR_BGR2HSV)
-    alpha_channel = cv2.bitwise_not(cv2.inRange(hsv_img, lower1, upper1))
+    alpha_channel = cv2.bitwise_not(cv2.inRange(hsv_img, LowerBoard, UpperBoard))
     b_channel, g_channel, r_channel = cv2.split(screw_img)
     screw_img_rgba = cv2.merge((b_channel, g_channel, r_channel, alpha_channel))
     pts1 = np.float32([[0, 0], [w, 0], [0, h], [w, h]])  # 原图中卡片在左上、右上、左下、右下的四个角点
@@ -344,8 +333,16 @@ if __name__ == '__main__':
     IS_SAVE = False
     IS_DEBUG = True
     DATASET_PATH = '/home/hao/Downloads/dataset/'  # 源数据集目录
-    SCREWS_PATH = '/home/hao/Downloads/dataset/screws/'  # 螺丝目录(分类:SCREWS_PATH/0 SCREWS_PATH/1 ...)
+    SCREWS_PATH = '/home/hao/Downloads/dataset/screws/'  # 螺丝目录(分类:class_index.png ...)
     Screws = os.listdir(SCREWS_PATH)
+
+    # 主板绿
+    LowerBoard = (30, 50, 20)
+    UpperBoard = (80, 190, 255)
+
+    # 桌面绿
+    LowerDesk = (60, 100, 40)
+    UpperDesk = (90, 200, 150)
 
     Names = os.listdir(DATASET_PATH + 'images/train/')
     NumProcessed = 0
